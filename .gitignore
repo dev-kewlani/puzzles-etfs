@@ -1,0 +1,11 @@
+# Data and run output stay on the owner's machine. The repo holds code only.
+data/
+runs/
+*.npy
+*.npz
+*.parquet
+__pycache__/
+*.nbi
+*.nbc
+*.env
+runs_*/

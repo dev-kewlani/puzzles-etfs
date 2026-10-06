@@ -1,0 +1,13 @@
+# Smoke overlay: a small grid for a fast end-to-end check (about 2 minutes). It is not a result.
+run_name: smoke
+labels:
+  horizons: [5, 21]
+models:
+  - {name: ridge_a001, enabled: false}
+  - {name: ridge_a1, enabled: false}
+  - {name: lgbm_light, params: {num_boost_round: 30}}
+walkforward:
+  windows: [expanding, rolling_3y]
+  retrain_every_months: 6
+benchmarks:
+  random_draws: 20

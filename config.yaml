@@ -1,0 +1,89 @@
+# etf66 settings: the dials we change between runs, and the keys that guard time order and the holdout.
+# Every other choice is a named constant next to the code that uses it (grep the name to find it).
+# Change a value for one run with --overlay FILE or --set key.path=value. The run saves the result in
+# runs/<id>/config.merged.yaml, and etf66/rules.py checks it before any work starts.
+# A "session" is one trading day. h is the label horizon in sessions.
+
+run_name: grid_v1                   # default run id suffix: <date>_<time>_<run_name>
+run:
+  notes: ""                         # free text; not part of the config hash
+
+# Holdout. Read-only: no overlay and no --set can change these two keys.
+data:
+  fence_date: "2021-01-01"          # dev data ends before this date; the holdout starts on it
+paths:
+  unlock_file: HOLDOUT_UNLOCK.yaml  # only the owner writes this file, one time, after the dev review
+
+# Time order of the external series: a feature at t reads them at t - lag, because they can close after the ETFs.
+context:
+  market_lag_sessions: 1            # VIX, indices and futures
+  cboe_lag_sessions: 1              # CBOE indices
+
+labels:
+  horizons: [1, 3, 5, 7, 10, 15, 21, 32, 44]
+  variants: [vol_scaled, rank, excess_vol_scaled, bin20, drawdown_rank]  # payoff_l<lambda> also works (labels.py)
+  min_vol_window: 5                 # a label at t reads opens up to t + 1 + max(h, this): sets the purge
+
+models:                             # entries merge by name; set enabled: false to switch one off
+  - {name: ridge_a001, kind: ridge, alpha: 0.01, enabled: true}
+  - {name: ridge_a01, kind: ridge, alpha: 0.1, enabled: true}
+  - {name: ridge_a1, kind: ridge, alpha: 1.0, enabled: true}
+  - {name: lgbm_light, kind: lightgbm, enabled: true,
+     params: {num_leaves: 7, learning_rate: 0.15, num_boost_round: 50, min_data_in_leaf: 1000, max_bin: 31,
+              feature_fraction: 0.2, bagging_fraction: 0.3, bagging_freq: 1, lambda_l2: 1.0, seed: 20261005}}
+
+model_defaults:
+  ridge: {device: auto, cpu_precision: float32}   # device: auto, cpu or gpu; cpu_precision: float32 or float64
+
+walkforward:
+  windows: [expanding, rolling_5y, rolling_3y, rolling_1y]
+  window_sessions: {rolling_5y: 1260, rolling_3y: 756, rolling_1y: 252}
+  retrain_every_months: 1           # 1 = the first session of each month
+  purge_extra_sessions: 1           # training rows end at d - (1 + max(h, min_vol_window)) - this
+
+benchmarks:
+  random_draws: 500                 # random equal-weight books per (fraction, rebalance) control
+
+evaluation:                         # dev sessions only; the rules refuse a date on or after the fence
+  common_start: "2010-01-01"
+  end: null                         # null = the last dev session
+  blocks: [["2010-01-01", "2012-12-31"], ["2013-01-01", "2015-12-31"], ["2016-01-01", "2018-12-31"],
+           ["2019-01-01", "2020-12-31"]]
+  holdout_blocks: null              # null = use blocks; only the holdout command reads this
+
+groups:                             # the groups command (etf66/groups.py)
+  source_run: null                  # a finished run to link into the new run --run-id first
+  purge_extra_sessions: 2           # training rows end at d - h - max(h, 5) - this
+
+environment:                        # the environment command (etf66/environment.py)
+  purge_extra_sessions: 1           # training rows end at d - (1 + max(h, 10)) - this
+  stress:
+    input: dd                       # dd, vol or corr: the 21-session prediction that marks stress
+    threshold: 0.8                  # stress when its percentile against the last 252 predictions is at or above this
+
+book:                               # the book command (etf66/book.py): switch, selection, gross
+  sources:                          # name -> the ETF score, a cross-sectional percentile
+    ret_ens: {kind: predictions, files: all, variants: [rank], horizons: all}
+    group: {kind: groups, horizons: all}
+    mix: {kind: mean, of: [ret_ens, group]}
+  selection:                        # entries merge by name
+    - {name: top_fraction, enabled: true, fraction: 0.2}
+    - {name: score_capped, enabled: true, max_weight: 0.15, max_group_weight: 0.40, iterations: 10,
+       score_powers: [1, 2]}        # weight ~ (2 |percentile - 0.5|) ^ power above the middle
+  switch:
+    states: [false, true]
+    defensive_share: 1.0            # share of the book that moves to TLT, IEF, GLD, USMV, UUP in stress
+  gross: [1.0, 1.5]
+  rebalance_every_sessions: [5, 21]
+  controls:                         # book --controls runs them on the reference book only
+    reference: {source: group, rule: score_capped_p2, switch: true, gross: 1.0, rebalance_every_sessions: 5}
+    shuffle_draws: 20               # the source score shuffled across groups (kind groups) or across ETFs
+    random_switch_draws: 20         # a random stress mask with the same share of stress sessions
+
+limits:
+  max_gross: 2.0                    # the owner's leverage limit for every book
+
+compute:                            # not part of the config hash
+  workers: 4
+  lightgbm_threads: null            # null = CPU count / workers. LightGBM results change with the thread count;
+                                    # fix it (and workers 1) to repeat a run bit for bit

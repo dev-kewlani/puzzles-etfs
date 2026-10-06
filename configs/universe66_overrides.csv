@@ -1,0 +1,5 @@
+ticker,first_usable_date,note
+IBIT,2024-01-11,"panels_long holds rows of an older product under IBIT before 2024-01-11"
+QQQ,,"panels_long has no QQQ history from 2004-12 to 2011-03 (the QQQQ ticker era)"
+HYG,,"the current HYG instrument starts on 2007-04-11"
+VNM,,"the current VNM instrument starts on 2009-08-14"
